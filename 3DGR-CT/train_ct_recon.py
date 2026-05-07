@@ -50,6 +50,7 @@ else:
 
 
 
+
 class OptimizationParams():
     def __init__(self):
         self.position_lr_init = 0.002
@@ -67,6 +68,53 @@ def tv_regularization(image):
 
 ct_projector_low_reso = ConeBeam3DProjector((config['img_size'][0]//2, config['img_size'][1]//2, config['img_size'][2]//2), config['proj_size'], config['num_proj'])
 ct_projector = ConeBeam3DProjector(config['img_size'], config['proj_size'], config['num_proj'])
+
+
+# --- CBCT CODE START---------------------------------------------------------------------------------------------------------------
+# Load CBCT volume if using CBCT initialization
+if config.get('use_cbct_init', False):
+    cbct_loader = get_data_loader(
+        'cbct_3d',
+        config['cbct_path'],    # path to cbct.npz
+        config['img_size'],
+        img_slice=None,
+        train=False,
+        batch_size=1
+    )
+    _, cbct_volume = next(iter(cbct_loader))  # [1, D, H, W, 1]
+    cbct_volume = cbct_volume.cuda()
+    cbct_volume_low_reso = cbct_volume[:, ::2, ::2, ::2, :]
+
+# -Gaussian initialization 
+op = OptimizationParams()
+gaussians = GaussianModel()
+
+if config.get('use_cbct_init', False):
+    # CBCT-guided initialization (our contribution)
+    gaussians.create_from_cbct(
+        cbct_volume_low_reso,
+        air_threshold=config.get('cbct_air_threshold', 0.08),
+        ini_intensity=config.get('cbct_ini_intensity', 0.20),
+        ini_sigma=config['ini_sigma'],
+        spatial_lr_scale=config['spatial_lr_scale'],
+        num_samples=config['num_gaussian'],
+        start=config['start']
+    )
+else:
+    # Original FBP-guided initialization
+    gaussians.create_from_fbp(
+        fbp_recon_low_reso,
+        air_threshold=config['air_threshold'],
+        ini_intensity=config['ini_intensity'],
+        ini_sigma=config['ini_sigma'],
+        spatial_lr_scale=config['spatial_lr_scale'],
+        num_samples=config['num_gaussian'],
+        start=config['start']
+    )
+
+gaussians.training_setup(op)
+
+
 
 for it, (grid, image) in enumerate(data_loader):
     grid = grid.cuda()  
