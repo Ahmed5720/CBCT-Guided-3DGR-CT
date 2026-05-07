@@ -89,13 +89,13 @@ CBCT initialization underperforms by ~1.4 dB at convergence. The key reason is *
 
 ### Convergence Plot
 
-![Convergence](media/convergence_plot.png)
+![Convergence](convergencePlot.jpeg)
 
 > CBCT initialization starts higher due to better structural seeding, but FBP initialization overtakes it around iteration 1,800 and achieves a higher final PSNR.
 
 ### Reconstruction Comparison
 
-![Reconstruction Comparison](media/reconstruction_comparison.png)
+![Reconstruction Comparison](comparisonPlot.jpeg)
 
 > Left to right: Ground Truth CT · FBP (20-view, streak-laden) · 3DGR-CT with FBP init · 3DGR-CT with CBCT init · CBCT input (reference).
 > The CBCT-initialized result shows more smoothing in brain parenchyma (consistent with weak CBCT soft-tissue gradients), while bone structures are comparably well-recovered.
