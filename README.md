@@ -11,9 +11,9 @@
 <!-- e.g. -->
 
 
-This project extends **3DGR-CT** — a sparse-view CT reconstruction method based on 3D Gaussian representations — by investigating a novel initialization strategy: replacing the standard **Filtered Back-Projection (FBP)** prior with a real **Cone-Beam CT (CBCT)** volume.
+This project extends **3DGR-CT**: a sparse-view CT reconstruction method based on 3D Gaussian representations, by investigating a simple initialization strategy: replacing the standard **Filtered Back-Projection (FBP)** prior with a real **Cone-Beam CT (CBCT)** volume.
 
-The core hypothesis is that a real CBCT, despite its scatter artifacts and HU inaccuracies, provides more anatomically faithful tissue boundaries than FBP computed from only 20 simulated X-ray views — leading to better-placed Gaussians and improved reconstruction quality.
+Our hypothesis is that a real CBCT, despite its scatter artifacts and HU inaccuracies, provides more anatomically faithful tissue boundaries than FBP computed from only 20 simulated X-ray views which leads to better-placed Gaussians and improved reconstruction quality.
 
 ---
 
@@ -166,13 +166,8 @@ python train_ct_recon.py \
 
 ## Discussion & Future Work
 
-The CBCT initialization result reveals an important nuance: **prior quality must be assessed in terms of consistency with the optimization target, not just structural accuracy**. A photometrically inconsistent prior (CBCT vs. CT projection data) can hinder convergence even when it provides better anatomical structure.
+The CBCT initialization result show an important observation: **prior quality must be assessed in terms of consistency with the optimization target, not just structural accuracy**. A photometrically inconsistent prior (CBCT vs. CT projection data) can hinder convergence even when it provides better anatomical structure.
 
-Most promising future directions:
-
-- **Real CBCT projections as training target** — use actual CBCT sinograms instead of simulated CT projections, making the CBCT initialization fully consistent
-- **Hybrid initialization** — use CBCT for Gaussian spatial placement but seed intensities from FBP values
-- **Intensity pre-correction** — histogram-match CBCT to FBP before initialization to reduce HU bias
 
 ---
 
