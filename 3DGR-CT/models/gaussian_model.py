@@ -14,6 +14,8 @@ import sys
 from gs_utils.Compute_intensity import compute_intensity
 
 
+
+
 class GaussianModel:
 
     def setup_functions(self):
@@ -154,7 +156,119 @@ class GaussianModel:
         self._scaling = nn.Parameter(scaling.requires_grad_(True))
         self._rotation = nn.Parameter(rotation.requires_grad_(True))
     
-    
+
+    """ CBCT GUIDED GS CODE EXTENSION START """
+    def create_from_cbct(self, cbct_image, air_threshold=0.08,
+                     ini_intensity=0.20, ini_sigma=0.15,
+                     spatial_lr_scale=1, num_samples=50000,
+                     start=0.15):
+        """
+        Initialize 3D Gaussians from a real CBCT volume instead of
+        an FBP-reconstructed image.
+
+        Arguments:
+            cbct_image    : torch.Tensor [bs, D, H, W, 1], normalized [0,1]
+            air_threshold : intensity below which voxels are treated as air.
+                            Slightly higher than FBP default (0.05) because
+                            CBCT has more scatter in background regions.
+            ini_intensity : k_t coefficient for intensity seeding. Slightly
+                            lower than FBP default (0.25) because CBCT
+                            intensities overestimate soft-tissue attenuation
+                            due to scatter.
+            ini_sigma     : k_sigma coefficient for scaling initialization.
+            spatial_lr_scale : scale factor for position learning rate.
+            num_samples   : number of Gaussians to initialize.
+            start         : fraction of top-gradient voxels to skip
+                            (avoids CBCT ring/scatter artifact peaks).
+        """
+        self.spatial_lr_scale = spatial_lr_scale
+        bs, D, H, W, _ = cbct_image.shape
+        start = int(start * D * H * W)
+
+        # Air masking
+        # Zero out background; threshold slightly higher than FBP
+        # to compensate for scatter lifting the noise floor.
+        cbct_image[cbct_image < air_threshold] = 0
+
+        # Reshape to [bs, 1, D, H, W] for gradient computation
+        cbct_vol = cbct_image.permute(0, 4, 1, 2, 3)  # [bs, 1, D, H, W]
+
+        #Gradient magnitude 
+        grad_x = torch.abs(cbct_vol[:, :, 1:-1, 1:-1, 1:-1]
+                        - cbct_vol[:, :, 1:-1, 1:-1, 2:])
+        grad_y = torch.abs(cbct_vol[:, :, 1:-1, 1:-1, 1:-1]
+                        - cbct_vol[:, :, 1:-1, 2:, 1:-1])
+        grad_z = torch.abs(cbct_vol[:, :, 1:-1, 1:-1, 1:-1]
+                        - cbct_vol[:, :, 2:, 1:-1, 1:-1])
+
+        # Pad gradients back to original volume size
+        grad_x = F.pad(grad_x, (1, 1, 1, 1, 1, 1), "constant", 0)
+        grad_y = F.pad(grad_y, (1, 1, 1, 1, 1, 1), "constant", 0)
+        grad_z = F.pad(grad_z, (1, 1, 1, 1, 1, 1), "constant", 0)
+
+        grad_norm = torch.sqrt(grad_x**2 + grad_y**2 + grad_z**2)
+        grad_norm = grad_norm.reshape(-1)
+
+        # Sample Gaussian centers from medium-gradient voxels
+        # Skip top `start` fraction: in CBCT these often correspond to
+        # ring artifacts and scatter edges rather than tissue boundaries.
+        _, indices = torch.topk(grad_norm, start + num_samples)
+        indices = indices[start:]
+
+        coords = torch.stack(
+            torch.meshgrid(
+                torch.arange(D),
+                torch.arange(H),
+                torch.arange(W)
+            ), dim=-1
+        ).reshape(-1, 3).cuda()
+
+        sampled_coords = coords[indices]
+
+        # Neighbor-count-based scaling
+        grid = torch.zeros((D, H, W), dtype=torch.int32, device="cuda")
+        indices_3d = sampled_coords.long()
+        grid[indices_3d[:, 0], indices_3d[:, 1], indices_3d[:, 2]] += 1
+
+        kernel_size = 5
+        padding = kernel_size // 2
+        conv_kernel = torch.ones(
+            (1, 1, kernel_size, kernel_size, kernel_size),
+            device="cuda", dtype=torch.float32
+        )
+        neighbours_count = F.conv3d(
+            grid.unsqueeze(0).unsqueeze(0).float(),
+            conv_kernel, padding=padding
+        ).squeeze()
+
+        num_neighbours = neighbours_count[
+            indices_3d[:, 0], indices_3d[:, 1], indices_3d[:, 2]
+        ]
+        scaling = ini_sigma / num_neighbours.float()
+
+        # Intensity initialization from CBCT values
+        # Re-apply air threshold after indexing to avoid seeding
+        # background Gaussians with non-zero intensity.
+        cbct_vol[cbct_vol < air_threshold] = 0
+        intensities = ini_intensity * cbct_vol.reshape(-1)[indices] + 0.001
+
+        # Normalize coordinates to [0, 1] 
+        sampled_coords = sampled_coords.float()
+        sampled_coords = sampled_coords / torch.tensor(
+            [D, H, W], dtype=torch.float, device="cuda"
+        )
+
+        # Parameter initialization
+        intensities = inverse_sigmoid(intensities).unsqueeze(1)
+        scaling = torch.log(scaling).unsqueeze(1).repeat(1, 3)
+        rotation = torch.zeros((num_samples, 4), device="cuda")
+        rotation[:, 0] = 1  # identity quaternion
+
+        self._xyz       = nn.Parameter(sampled_coords.requires_grad_(True))
+        self._intensity = nn.Parameter(intensities.requires_grad_(True))
+        self._scaling   = nn.Parameter(scaling.requires_grad_(True))
+        self._rotation  = nn.Parameter(rotation.requires_grad_(True))
+
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
 
